@@ -1,9 +1,42 @@
 # src/chain.py
+import json
 import os
 from dotenv import load_dotenv
 from anthropic import Anthropic
 
 load_dotenv()
+
+CLASSIFIER_PROMPT = """Classify this user question about IRS taxes. Return ONLY a JSON object with these fields:
+- "is_form_question": true if the user is asking about how to fill out, complete, or report something on a specific IRS form or schedule. false otherwise.
+- "forms": list of form names mentioned or implied (e.g. ["Form 1040", "Schedule C"]). Empty list if none.
+- "query_type": "line_specific" if asking about specific lines/fields/boxes on a form. "scenario" if describing a situation and wanting guidance on which parts of the form apply.
+
+User question: {question}"""
+
+
+def classify_query(question: str) -> dict:
+    """Use Claude Haiku to classify whether a question is about filling out a form."""
+    default = {"is_form_question": False, "forms": [], "query_type": "scenario"}
+    try:
+        client = Anthropic()
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=150,
+            messages=[{"role": "user", "content": CLASSIFIER_PROMPT.format(question=question)}],
+        )
+        raw = response.content[0].text.strip()
+        parsed = json.loads(raw)
+        raw_type = parsed.get("query_type", "scenario")
+        return {
+            "is_form_question": bool(parsed.get("is_form_question", False)),
+            "forms": list(parsed.get("forms", [])),
+            "query_type": raw_type if raw_type in ("line_specific", "scenario") else "scenario",
+        }
+    except (json.JSONDecodeError, KeyError, IndexError):
+        return default
+    except Exception:
+        return default
+
 
 SYSTEM_PROMPT_TEMPLATE = """You are an IRS assistant that answers using only the IRS source documents provided below.
 

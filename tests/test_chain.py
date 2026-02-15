@@ -29,7 +29,7 @@ def test_build_prompt_includes_chat_history():
 
 
 from unittest.mock import patch, MagicMock
-from src.chain import ask
+from src.chain import ask, classify_query
 
 
 def test_ask_calls_claude_and_returns_response():
@@ -45,3 +45,47 @@ def test_ask_calls_claude_and_returns_response():
     assert sources[0]["source_url"] == "https://irs.gov/d"
     assert sources[0]["text"] == "Deadline is April 15."
     assert callable(stream)
+
+
+def test_classify_query_detects_form_question():
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text='{"is_form_question": true, "forms": ["Schedule C"], "query_type": "scenario"}')]
+
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = mock_response
+
+    with patch("src.chain.Anthropic", return_value=mock_client):
+        result = classify_query("How do I fill out Schedule C as a freelancer?")
+
+    assert result["is_form_question"] is True
+    assert "Schedule C" in result["forms"]
+    assert result["query_type"] in ("line_specific", "scenario")
+
+
+def test_classify_query_detects_non_form_question():
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text='{"is_form_question": false, "forms": [], "query_type": "scenario"}')]
+
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = mock_response
+
+    with patch("src.chain.Anthropic", return_value=mock_client):
+        result = classify_query("When is the tax filing deadline?")
+
+    assert result["is_form_question"] is False
+    assert result["forms"] == []
+
+
+def test_classify_query_handles_malformed_response():
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text="not valid json")]
+
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = mock_response
+
+    with patch("src.chain.Anthropic", return_value=mock_client):
+        result = classify_query("How do I fill out Form 1040?")
+
+    assert result["is_form_question"] is False
+    assert result["forms"] == []
+    assert result["query_type"] == "scenario"
