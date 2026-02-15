@@ -54,7 +54,11 @@ def extract_pdf_text(pdf_path: str) -> str:
         return ""
 
 
-LANGUAGE_PREFIXES = ("/es/", "/zh-hans/", "/zh-hant/", "/ko/", "/ru/", "/vi/", "/ht/")
+LANGUAGE_PREFIXES = ("/es/", "/es", "/zh-hans/", "/zh-hans", "/zh-hant/", "/zh-hant",
+                     "/ko/", "/ko", "/ru/", "/ru", "/vi/", "/vi", "/ht/", "/ht")
+
+# Language suffixes in PDF filenames (e.g. p1sp.pdf, p17vie.pdf, p519zhs.pdf)
+LANGUAGE_PDF_SUFFIXES = ("sp.pdf", "vie.pdf", "zhs.pdf", "zht.pdf", "ko.pdf", "ru.pdf")
 
 
 def discover_links(html: str, base_url: str) -> list[str]:
@@ -67,6 +71,8 @@ def discover_links(html: str, base_url: str) -> list[str]:
         parsed = urlparse(full_url)
         if parsed.hostname and "irs.gov" in parsed.hostname:
             if any(parsed.path.startswith(p) for p in LANGUAGE_PREFIXES):
+                continue
+            if any(parsed.path.lower().endswith(s) for s in LANGUAGE_PDF_SUFFIXES):
                 continue
             clean_url = f"{parsed.scheme}://{parsed.hostname}{parsed.path}"
             if clean_url not in links:
