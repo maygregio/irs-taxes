@@ -136,14 +136,25 @@ def download_pdf(url: str, save_dir: str) -> str | None:
         return None
 
 
-def save_document(doc: dict, output_dir: str) -> None:
-    """Save a scraped document as JSON."""
-    parsed = urlparse(doc["url"])
+def url_to_filename(url: str) -> str:
+    """Convert a URL to a safe filename (without extension)."""
+    parsed = urlparse(url)
     safe_name = parsed.path.strip("/").replace("/", "_") or "index"
     qs = parse_qs(parsed.query)
     if "page" in qs:
         safe_name += f"_page{qs['page'][0]}"
-    filepath = os.path.join(output_dir, f"{safe_name}.json")
+    return safe_name
+
+
+def is_already_scraped(url: str, output_dir: str) -> bool:
+    """Check if a URL has already been scraped and saved."""
+    filepath = os.path.join(output_dir, f"{url_to_filename(url)}.json")
+    return os.path.exists(filepath)
+
+
+def save_document(doc: dict, output_dir: str) -> None:
+    """Save a scraped document as JSON."""
+    filepath = os.path.join(output_dir, f"{url_to_filename(doc['url'])}.json")
     with open(filepath, "w") as f:
         json.dump(doc, f, indent=2)
 
@@ -171,10 +182,22 @@ def scrape_irs(output_dir: str = "data/raw", max_pages_per_target: int = 200) ->
         if paginated_urls:
             print(f"  Found {len(paginated_urls)} paginated pages")
 
-        # Build link list: target page, then paginated pages, then discovered links
-        links = [target["url"]] + paginated_urls
-        discovered = discover_links(html, target["url"])
-        for dl in discovered:
+        # Collect links from the first page and all paginated pages
+        all_discovered = list(discover_links(html, target["url"]))
+        for pag_url in paginated_urls:
+            print(f"  Scanning {pag_url} for links...")
+            pag_html = fetch_page(pag_url)
+            if pag_html:
+                for dl in discover_links(pag_html, pag_url):
+                    if dl not in all_discovered:
+                        all_discovered.append(dl)
+            time.sleep(1.5)
+
+        print(f"  {len(all_discovered)} total links discovered")
+
+        # Build link list: target page first, then all discovered links
+        links = [target["url"]]
+        for dl in all_discovered:
             if dl not in links:
                 links.append(dl)
 
@@ -182,6 +205,10 @@ def scrape_irs(output_dir: str = "data/raw", max_pages_per_target: int = 200) ->
             if link in visited:
                 continue
             visited.add(link)
+
+            if is_already_scraped(link, output_dir):
+                print(f"  [skip] Already scraped: {link}")
+                continue
 
             if link.lower().endswith(".pdf"):
                 pdf_path = download_pdf(link, pdf_dir)
