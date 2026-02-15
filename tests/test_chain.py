@@ -37,7 +37,8 @@ def test_ask_calls_claude_and_returns_response():
         {"text": "Deadline is April 15.", "source_url": "https://irs.gov/d", "title": "Deadlines"}
     ]
 
-    with patch("src.chain.retrieve_relevant_chunks", return_value=mock_chunks), \
+    with patch("src.chain.classify_query", return_value={"is_form_question": False, "forms": [], "query_type": "scenario"}), \
+         patch("src.chain.retrieve_relevant_chunks", return_value=mock_chunks), \
          patch("src.chain.Anthropic"):
         sources, stream = ask("When is the deadline?", chat_history=[])
 
@@ -89,6 +90,40 @@ def test_classify_query_handles_malformed_response():
     assert result["is_form_question"] is False
     assert result["forms"] == []
     assert result["query_type"] == "scenario"
+
+
+def test_ask_uses_classifier_and_boosts_retrieval_for_form_questions():
+    mock_chunks = [
+        {"text": "Schedule C instructions.", "source_url": "https://irs.gov/sc", "title": "Schedule C"}
+    ]
+    classification = {"is_form_question": True, "forms": ["Schedule C"], "query_type": "scenario"}
+
+    with patch("src.chain.classify_query", return_value=classification), \
+         patch("src.chain.retrieve_relevant_chunks", return_value=mock_chunks) as mock_retrieve, \
+         patch("src.chain.Anthropic"):
+        sources, stream = ask("How do I fill out Schedule C?", chat_history=[])
+
+    # Verify retrieval was called with augmented query and boosted top_k
+    call_args = mock_retrieve.call_args
+    assert "Schedule C" in call_args[0][0]
+    assert call_args[1]["top_k"] == 10
+
+
+def test_ask_uses_default_flow_for_non_form_questions():
+    mock_chunks = [
+        {"text": "Deadline info.", "source_url": "https://irs.gov/d", "title": "Deadlines"}
+    ]
+    classification = {"is_form_question": False, "forms": [], "query_type": "scenario"}
+
+    with patch("src.chain.classify_query", return_value=classification), \
+         patch("src.chain.retrieve_relevant_chunks", return_value=mock_chunks) as mock_retrieve, \
+         patch("src.chain.Anthropic"):
+        sources, stream = ask("When is the deadline?", chat_history=[])
+
+    # Verify retrieval was called with original query and default top_k
+    call_args = mock_retrieve.call_args
+    assert call_args[0][0] == "When is the deadline?"
+    assert call_args[1]["top_k"] == 5
 
 
 def test_build_prompt_uses_form_template_for_line_specific():

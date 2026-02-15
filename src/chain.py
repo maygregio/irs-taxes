@@ -147,11 +147,23 @@ from src.retriever import retrieve_relevant_chunks
 
 def ask(question: str, chat_history: list[dict]) -> tuple[list[dict], callable]:
     """
-    Answer a question using RAG: retrieve relevant IRS chunks, send to Claude.
+    Answer a question using RAG: classify, retrieve relevant IRS chunks, send to Claude.
+    For form-filling questions, boosts retrieval and uses a specialized prompt.
     Returns (source_chunks, stream_generator_function).
     """
-    chunks = retrieve_relevant_chunks(question)
-    messages = build_prompt(question, chunks, chat_history)
+    classification = classify_query(question)
+
+    if classification["is_form_question"]:
+        # Augment query with form names for better retrieval
+        forms = classification["forms"]
+        augmented_query = f"{' '.join(forms)} {question}" if forms else question
+        chunks = retrieve_relevant_chunks(augmented_query, top_k=10)
+        query_type = classification["query_type"]
+    else:
+        chunks = retrieve_relevant_chunks(question, top_k=5)
+        query_type = None
+
+    messages = build_prompt(question, chunks, chat_history, query_type=query_type)
 
     system_msg = messages[0]["content"]
     conversation = messages[1:]
