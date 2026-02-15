@@ -100,5 +100,19 @@ def build_index(
             metadatas=[c["metadata"] for c in chunks[i:batch_end]],
         )
 
+    # Save BM25 corpus for hybrid search
+    bm25_corpus = [
+        {
+            "text": c["text"],
+            "source_url": c["metadata"]["source_url"],
+            "title": c["metadata"]["title"],
+        }
+        for c in chunks
+    ]
+    corpus_path = os.path.join(os.path.dirname(chroma_dir), "bm25_corpus.json")
+    with open(corpus_path, "w") as f:
+        json.dump(bm25_corpus, f)
+
     print(f"Indexed {len(chunks)} chunks into ChromaDB.")
+    print(f"Saved BM25 corpus ({len(bm25_corpus)} entries) to {corpus_path}")
     return len(chunks)

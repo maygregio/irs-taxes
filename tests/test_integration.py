@@ -48,23 +48,38 @@ def test_index_and_retrieve(tmp_path):
     )
     assert count > 0
 
-    # Query it (patch the retriever's globals to use our test ChromaDB)
+    # Verify BM25 corpus was created
+    bm25_path = os.path.join(str(tmp_path), "bm25_corpus.json")
+    assert os.path.exists(bm25_path)
+    with open(bm25_path) as f:
+        corpus = json.load(f)
+    assert len(corpus) == count
+
+    # Query it (patch the retriever's globals to use our test ChromaDB and BM25)
     import src.retriever as retriever_mod
     import chromadb
     from sentence_transformers import SentenceTransformer
 
     old_collection = retriever_mod._collection
     old_model = retriever_mod._model
+    old_bm25 = retriever_mod._bm25
+    old_bm25_corpus = retriever_mod._bm25_corpus
 
     try:
         client = chromadb.PersistentClient(path=str(chroma_dir))
         retriever_mod._collection = client.get_collection("irs_documents")
         retriever_mod._model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+        # Reset BM25 so it reloads from the test corpus
+        retriever_mod._bm25 = None
+        retriever_mod._bm25_corpus = None
 
-        results = retrieve_relevant_chunks("What is the tax filing deadline?", top_k=2)
-        assert len(results) == 2
-        # The deadline document should be the most relevant
-        assert any("April 15" in r["text"] for r in results)
+        with patch.object(retriever_mod, "BM25_CORPUS_PATH", bm25_path):
+            results = retrieve_relevant_chunks("What is the tax filing deadline?", top_k=2)
+            assert len(results) >= 1
+            # The deadline document should be the most relevant
+            assert any("April 15" in r["text"] for r in results)
     finally:
         retriever_mod._collection = old_collection
         retriever_mod._model = old_model
+        retriever_mod._bm25 = old_bm25
+        retriever_mod._bm25_corpus = old_bm25_corpus

@@ -37,17 +37,11 @@ def test_ask_calls_claude_and_returns_response():
         {"text": "Deadline is April 15.", "source_url": "https://irs.gov/d", "title": "Deadlines"}
     ]
 
-    mock_response = MagicMock()
-    mock_response.content = [MagicMock(text="The tax deadline is April 15. [Source: https://irs.gov/d]")]
-
     with patch("src.chain.retrieve_relevant_chunks", return_value=mock_chunks), \
-         patch("src.chain.Anthropic") as mock_anthropic_cls:
-        mock_client = MagicMock()
-        mock_anthropic_cls.return_value = mock_client
-        mock_client.messages.create.return_value = mock_response
+         patch("src.chain.Anthropic"):
+        sources, stream = ask("When is the deadline?", chat_history=[])
 
-        answer, sources = ask("When is the deadline?", chat_history=[])
-
-    assert "April 15" in answer
     assert len(sources) == 1
     assert sources[0]["source_url"] == "https://irs.gov/d"
+    assert sources[0]["text"] == "Deadline is April 15."
+    assert callable(stream)
