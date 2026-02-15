@@ -89,3 +89,30 @@ def test_classify_query_handles_malformed_response():
     assert result["is_form_question"] is False
     assert result["forms"] == []
     assert result["query_type"] == "scenario"
+
+
+def test_build_prompt_uses_form_template_for_line_specific():
+    chunks = [
+        {"text": "Schedule C line 1 instructions.", "source_url": "https://irs.gov/sc", "title": "Schedule C"},
+    ]
+    messages = build_prompt("What goes on line 12?", chunks, chat_history=[], query_type="line_specific")
+    system_content = next(m["content"] for m in messages if m["role"] == "system")
+    assert "line-by-line" in system_content.lower() or "Line" in system_content
+
+
+def test_build_prompt_uses_form_template_for_scenario():
+    chunks = [
+        {"text": "Schedule C instructions.", "source_url": "https://irs.gov/sc", "title": "Schedule C"},
+    ]
+    messages = build_prompt("How do I report freelance income?", chunks, chat_history=[], query_type="scenario")
+    system_content = next(m["content"] for m in messages if m["role"] == "system")
+    assert "clarifying question" in system_content.lower() or "follow-up" in system_content.lower()
+
+
+def test_build_prompt_uses_default_template_when_no_query_type():
+    chunks = [
+        {"text": "Deadline info.", "source_url": "https://irs.gov/d", "title": "Deadlines"},
+    ]
+    messages = build_prompt("When is the deadline?", chunks, chat_history=[])
+    system_content = next(m["content"] for m in messages if m["role"] == "system")
+    assert "IRS assistant" in system_content

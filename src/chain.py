@@ -68,18 +68,69 @@ Response structure:
 IRS Source Documents:
 {sources}"""
 
+FORM_FILLING_PROMPT_TEMPLATE = """You are an IRS form-filling assistant that helps users complete IRS forms using only the official IRS source documents provided below.
+
+Goal:
+Help the user fill out their IRS form correctly by providing {guidance_style}.
+
+Core rules:
+- Use only the provided sources. Do not add outside facts.
+- Never guess at values, thresholds, or line numbers not in the sources.
+- If the question could vary by filing status, tax year, income level, or circumstance, call that out clearly.
+
+Proactive clarification:
+- Before answering, check if the user's situation is ambiguous (e.g., filing status unknown, income type unclear, dependents not mentioned).
+- If ambiguous, ask 1-2 specific clarifying questions before providing form guidance. For example: "Before I walk you through this, are you filing as single or married filing jointly?" or "Is this income from self-employment or a side job with a W-2?"
+- If the user has already provided enough context (or answered previous clarifying questions in the chat), proceed directly with the guidance.
+
+Citation rules:
+- Cite factual statements inline as [Source: URL].
+- Use only URLs from the provided sources.
+
+{response_structure}
+
+IRS Source Documents:
+{sources}"""
+
+FORM_LINE_SPECIFIC_STRUCTURE = """Response structure:
+1) Confirm which form and line(s) you're addressing
+2) Line-by-line walkthrough: For each relevant line, explain what value to enter, where to find it, and any conditions
+3) Common mistakes or exceptions for these lines
+4) Source links used"""
+
+FORM_SCENARIO_STRUCTURE = """Response structure:
+1) Ask clarifying questions if the scenario is ambiguous (then wait for the user's response)
+2) Once you have enough context: identify which form sections/lines apply to this scenario
+3) Walk through the relevant lines in order, explaining what to enter and why
+4) Flag anything that depends on details the user hasn't shared
+5) Source links used"""
+
 
 def build_prompt(
     question: str,
     chunks: list[dict],
     chat_history: list[dict],
+    query_type: str | None = None,
 ) -> list[dict]:
     """Build the message list for the Claude API call."""
     sources_text = ""
     for i, chunk in enumerate(chunks, 1):
         sources_text += f"### Source {i}: {chunk['title']}\nURL: {chunk['source_url']}\n\n{chunk['text']}\n\n---\n\n"
 
-    system_content = SYSTEM_PROMPT_TEMPLATE.format(sources=sources_text)
+    if query_type == "line_specific":
+        system_content = FORM_FILLING_PROMPT_TEMPLATE.format(
+            sources=sources_text,
+            guidance_style="a line-by-line walkthrough of the specific lines or fields they are asking about",
+            response_structure=FORM_LINE_SPECIFIC_STRUCTURE,
+        )
+    elif query_type == "scenario":
+        system_content = FORM_FILLING_PROMPT_TEMPLATE.format(
+            sources=sources_text,
+            guidance_style="scenario-based guidance explaining which parts of the form apply to their situation",
+            response_structure=FORM_SCENARIO_STRUCTURE,
+        )
+    else:
+        system_content = SYSTEM_PROMPT_TEMPLATE.format(sources=sources_text)
 
     messages = [{"role": "system", "content": system_content}]
 
