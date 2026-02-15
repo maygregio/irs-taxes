@@ -2,7 +2,7 @@ import json
 import os
 import time
 from datetime import datetime, timezone
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, parse_qs
 
 import pdfplumber
 import requests
@@ -54,6 +54,9 @@ def extract_pdf_text(pdf_path: str) -> str:
         return ""
 
 
+LANGUAGE_PREFIXES = ("/es/", "/zh-hans/", "/zh-hant/", "/ko/", "/ru/", "/vi/", "/ht/")
+
+
 def discover_links(html: str, base_url: str) -> list[str]:
     """Find all internal IRS.gov links on a page."""
     soup = BeautifulSoup(html, "html.parser")
@@ -63,14 +66,40 @@ def discover_links(html: str, base_url: str) -> list[str]:
         full_url = urljoin(base_url, href)
         parsed = urlparse(full_url)
         if parsed.hostname and "irs.gov" in parsed.hostname:
+            if any(parsed.path.startswith(p) for p in LANGUAGE_PREFIXES):
+                continue
             clean_url = f"{parsed.scheme}://{parsed.hostname}{parsed.path}"
             if clean_url not in links:
                 links.append(clean_url)
     return links
 
 
+def discover_pagination(html: str, base_url: str) -> list[str]:
+    """Find all pagination URLs by detecting the last page number."""
+    soup = BeautifulSoup(html, "html.parser")
+    max_page = 0
+    base_path = urlparse(base_url).path
+    for a_tag in soup.find_all("a", href=True):
+        href = a_tag["href"]
+        full_url = urljoin(base_url, href)
+        parsed = urlparse(full_url)
+        qs = parse_qs(parsed.query)
+        if "page" in qs and parsed.path == base_path:
+            try:
+                page_num = int(qs["page"][0])
+                max_page = max(max_page, page_num)
+            except ValueError:
+                continue
+    if max_page == 0:
+        return []
+    parsed_base = urlparse(base_url)
+    base_no_query = f"{parsed_base.scheme}://{parsed_base.hostname}{parsed_base.path}"
+    return [f"{base_no_query}?page={i}" for i in range(1, max_page + 1)]
+
+
 SCRAPE_TARGETS = [
     {"url": "https://www.irs.gov/forms-instructions", "content_type": "forms"},
+    {"url": "https://www.irs.gov/forms-instructions-and-publications", "content_type": "forms"},
     {"url": "https://www.irs.gov/publications", "content_type": "publications"},
     {"url": "https://www.irs.gov/taxtopics", "content_type": "taxtopics"},
     {"url": "https://www.irs.gov/faqs", "content_type": "faqs"},
@@ -111,12 +140,15 @@ def save_document(doc: dict, output_dir: str) -> None:
     """Save a scraped document as JSON."""
     parsed = urlparse(doc["url"])
     safe_name = parsed.path.strip("/").replace("/", "_") or "index"
+    qs = parse_qs(parsed.query)
+    if "page" in qs:
+        safe_name += f"_page{qs['page'][0]}"
     filepath = os.path.join(output_dir, f"{safe_name}.json")
     with open(filepath, "w") as f:
         json.dump(doc, f, indent=2)
 
 
-def scrape_irs(output_dir: str = "data/raw", max_pages_per_target: int = 50) -> int:
+def scrape_irs(output_dir: str = "data/raw", max_pages_per_target: int = 200) -> int:
     """
     Scrape IRS.gov target pages and save content as JSON files.
     Returns the number of documents saved.
@@ -134,8 +166,17 @@ def scrape_irs(output_dir: str = "data/raw", max_pages_per_target: int = 50) -> 
         if not html:
             continue
 
-        links = discover_links(html, target["url"])
-        links = [target["url"]] + links
+        # Follow pagination first (e.g. ?page=0, ?page=1, ...)
+        paginated_urls = discover_pagination(html, target["url"])
+        if paginated_urls:
+            print(f"  Found {len(paginated_urls)} paginated pages")
+
+        # Build link list: target page, then paginated pages, then discovered links
+        links = [target["url"]] + paginated_urls
+        discovered = discover_links(html, target["url"])
+        for dl in discovered:
+            if dl not in links:
+                links.append(dl)
 
         for link in links[:max_pages_per_target]:
             if link in visited:
