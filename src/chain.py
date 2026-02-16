@@ -1,10 +1,7 @@
 # src/chain.py
 import json
 import os
-from dotenv import load_dotenv
 from anthropic import Anthropic
-
-load_dotenv()
 
 CLASSIFIER_PROMPT = """Classify this user question about IRS taxes. Return ONLY a JSON object with these fields:
 - "is_form_question": true if the user is asking about how to fill out, complete, or report something on a specific IRS form or schedule. false otherwise.
