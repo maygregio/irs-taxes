@@ -1,85 +1,60 @@
 # tests/test_integration.py
 """
-Integration test: indexes sample documents and queries them.
-Does NOT hit IRS.gov or Claude API — uses mocks for external services.
+Integration test: verifies the retrieve -> ask pipeline works end-to-end.
+Mocks Pinecone, Voyage AI, and Anthropic — no external calls.
 """
-import json
-import os
 from unittest.mock import patch, MagicMock
 
-from src.indexer import load_documents, chunk_documents, build_index
 from src.retriever import retrieve_relevant_chunks
+from src.chain import ask
 
 
-def test_index_and_retrieve(tmp_path):
-    """Test the full pipeline: load docs -> chunk -> index -> retrieve."""
-    # Create sample documents
-    raw_dir = tmp_path / "raw"
-    raw_dir.mkdir()
-    chroma_dir = tmp_path / "chroma"
-
-    doc1 = {
-        "url": "https://www.irs.gov/filing/deadline",
-        "title": "Tax Filing Deadline",
-        "content": "The tax filing deadline for individual returns is April 15. "
-        "If April 15 falls on a weekend or holiday, the deadline is the next business day. "
-        "You can request an automatic extension to October 15 by filing Form 4868.",
-        "content_type": "forms",
+def test_retrieve_and_ask_pipeline():
+    """Test the full query pipeline: embed -> search -> build prompt -> stream."""
+    mock_query_result = {
+        "matches": [
+            {
+                "id": "chunk_0",
+                "score": 0.9,
+                "metadata": {
+                    "text": "The tax filing deadline for individual returns is April 15. "
+                    "If April 15 falls on a weekend, the deadline is the next business day.",
+                    "source_url": "https://www.irs.gov/filing/deadline",
+                    "title": "Tax Filing Deadline",
+                },
+            },
+            {
+                "id": "chunk_1",
+                "score": 0.7,
+                "metadata": {
+                    "text": "You can request an automatic extension to October 15 by filing Form 4868.",
+                    "source_url": "https://www.irs.gov/filing/deadline",
+                    "title": "Tax Filing Deadline",
+                },
+            },
+        ]
     }
-    doc2 = {
-        "url": "https://www.irs.gov/deductions/standard",
-        "title": "Standard Deduction",
-        "content": "The standard deduction for single filers is $14,600 for 2024. "
-        "For married filing jointly, the standard deduction is $29,200. "
-        "Taxpayers who are 65 or older get an additional standard deduction.",
-        "content_type": "publications",
-    }
 
-    for i, doc in enumerate([doc1, doc2]):
-        with open(raw_dir / f"doc{i}.json", "w") as f:
-            json.dump(doc, f)
+    mock_index = MagicMock()
+    mock_index.query.return_value = mock_query_result
 
-    # Build the index
-    count = build_index(
-        raw_dir=str(raw_dir),
-        chroma_dir=str(chroma_dir),
-        chunk_size=500,
-        chunk_overlap=50,
-    )
-    assert count > 0
+    mock_voyage = MagicMock()
+    mock_voyage.embed.return_value.embeddings = [[0.1] * 1024]
 
-    # Verify BM25 corpus was created
-    bm25_path = os.path.join(str(tmp_path), "bm25_corpus.json")
-    assert os.path.exists(bm25_path)
-    with open(bm25_path) as f:
-        corpus = json.load(f)
-    assert len(corpus) == count
+    with patch("src.retriever._get_pinecone_index", return_value=mock_index), \
+         patch("src.retriever._get_voyage_client", return_value=mock_voyage):
+        results = retrieve_relevant_chunks("What is the tax filing deadline?", top_k=2)
 
-    # Query it (patch the retriever's globals to use our test ChromaDB and BM25)
-    import src.retriever as retriever_mod
-    import chromadb
-    from sentence_transformers import SentenceTransformer
+    assert len(results) >= 1
+    assert any("April 15" in r["text"] for r in results)
 
-    old_collection = retriever_mod._collection
-    old_model = retriever_mod._model
-    old_bm25 = retriever_mod._bm25
-    old_bm25_corpus = retriever_mod._bm25_corpus
+    # Now test the full ask() pipeline
+    with patch("src.retriever._get_pinecone_index", return_value=mock_index), \
+         patch("src.retriever._get_voyage_client", return_value=mock_voyage), \
+         patch("src.chain.classify_query", return_value={"is_form_question": False, "forms": [], "query_type": "scenario"}), \
+         patch("src.chain.Anthropic"):
+        sources, stream = ask("What is the tax filing deadline?", chat_history=[])
 
-    try:
-        client = chromadb.PersistentClient(path=str(chroma_dir))
-        retriever_mod._collection = client.get_collection("irs_documents")
-        retriever_mod._model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-        # Reset BM25 so it reloads from the test corpus
-        retriever_mod._bm25 = None
-        retriever_mod._bm25_corpus = None
-
-        with patch.object(retriever_mod, "BM25_CORPUS_PATH", bm25_path):
-            results = retrieve_relevant_chunks("What is the tax filing deadline?", top_k=2)
-            assert len(results) >= 1
-            # The deadline document should be the most relevant
-            assert any("April 15" in r["text"] for r in results)
-    finally:
-        retriever_mod._collection = old_collection
-        retriever_mod._model = old_model
-        retriever_mod._bm25 = old_bm25
-        retriever_mod._bm25_corpus = old_bm25_corpus
+    assert len(sources) >= 1
+    assert any("April 15" in s["text"] for s in sources)
+    assert callable(stream)
