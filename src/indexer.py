@@ -2,9 +2,15 @@
 import json
 import os
 
+import voyageai
+from pinecone import Pinecone, ServerlessSpec
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-import chromadb
-from sentence_transformers import SentenceTransformer
+
+VOYAGE_MODEL = "voyage-3"
+VOYAGE_DIMENSION = 1024
+PINECONE_INDEX_NAME = os.environ.get("PINECONE_INDEX_NAME", "irs-documents")
+PINECONE_CLOUD = "aws"
+PINECONE_REGION = "us-east-1"
 
 
 def load_documents(raw_dir: str) -> list[dict]:
@@ -49,18 +55,13 @@ def chunk_documents(
     return chunks
 
 
-EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-COLLECTION_NAME = "irs_documents"
-
-
 def build_index(
     raw_dir: str = "data/raw",
-    chroma_dir: str = "data/chroma",
     chunk_size: int = 1000,
     chunk_overlap: int = 200,
 ) -> int:
     """
-    Load documents, chunk them, embed, and store in ChromaDB.
+    Load documents, chunk them, embed via Voyage AI, and upsert to Pinecone.
     Returns the number of chunks indexed.
     """
     print("Loading documents...")
@@ -71,48 +72,62 @@ def build_index(
 
     print(f"Loaded {len(docs)} documents. Chunking...")
     chunks = chunk_documents(docs, chunk_size, chunk_overlap)
-    print(f"Created {len(chunks)} chunks. Embedding...")
+    print(f"Created {len(chunks)} chunks. Embedding via Voyage AI...")
 
-    model = SentenceTransformer(EMBEDDING_MODEL_NAME)
-
-    texts = [c["text"] for c in chunks]
-    embeddings = model.encode(texts, show_progress_bar=True).tolist()
-
-    client = chromadb.PersistentClient(path=chroma_dir)
-
-    try:
-        client.delete_collection(COLLECTION_NAME)
-    except (ValueError, chromadb.errors.NotFoundError):
-        pass
-
-    collection = client.create_collection(
-        name=COLLECTION_NAME,
-        metadata={"hnsw:space": "cosine"},
+    # Initialize clients
+    voyage_client = voyageai.Client(
+        api_key=os.environ.get("VOYAGE_API_KEY", ""),
     )
+    pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY", ""))
 
-    batch_size = 500
-    for i in range(0, len(chunks), batch_size):
-        batch_end = min(i + batch_size, len(chunks))
-        collection.add(
-            ids=[f"chunk_{j}" for j in range(i, batch_end)],
-            embeddings=embeddings[i:batch_end],
-            documents=texts[i:batch_end],
-            metadatas=[c["metadata"] for c in chunks[i:batch_end]],
+    # Create index if it doesn't exist
+    existing_indexes = pc.list_indexes().names()
+    if PINECONE_INDEX_NAME not in existing_indexes:
+        print(f"Creating Pinecone index '{PINECONE_INDEX_NAME}'...")
+        pc.create_index(
+            name=PINECONE_INDEX_NAME,
+            dimension=VOYAGE_DIMENSION,
+            metric="cosine",
+            spec=ServerlessSpec(cloud=PINECONE_CLOUD, region=PINECONE_REGION),
         )
 
-    # Save BM25 corpus for hybrid search
-    bm25_corpus = [
-        {
-            "text": c["text"],
-            "source_url": c["metadata"]["source_url"],
-            "title": c["metadata"]["title"],
-        }
-        for c in chunks
-    ]
-    corpus_path = os.path.join(os.path.dirname(chroma_dir), "bm25_corpus.json")
-    with open(corpus_path, "w") as f:
-        json.dump(bm25_corpus, f)
+    index = pc.Index(PINECONE_INDEX_NAME)
 
-    print(f"Indexed {len(chunks)} chunks into ChromaDB.")
-    print(f"Saved BM25 corpus ({len(bm25_corpus)} entries) to {corpus_path}")
+    # Clear existing vectors
+    index.delete(delete_all=True)
+
+    # Embed and upsert in batches
+    batch_size = 96  # Voyage AI batch limit
+    texts = [c["text"] for c in chunks]
+
+    for i in range(0, len(chunks), batch_size):
+        batch_end = min(i + batch_size, len(chunks))
+        batch_texts = texts[i:batch_end]
+
+        print(f"  Embedding batch {i // batch_size + 1} ({i}–{batch_end})...")
+        result = voyage_client.embed(
+            batch_texts, model=VOYAGE_MODEL, input_type="document"
+        )
+        embeddings = result.embeddings
+
+        vectors = []
+        for j, (emb, chunk) in enumerate(
+            zip(embeddings, chunks[i:batch_end])
+        ):
+            vectors.append(
+                {
+                    "id": f"chunk_{i + j}",
+                    "values": emb,
+                    "metadata": {
+                        "text": chunk["text"],
+                        "source_url": chunk["metadata"]["source_url"],
+                        "title": chunk["metadata"]["title"],
+                        "content_type": chunk["metadata"]["content_type"],
+                        "chunk_index": chunk["metadata"]["chunk_index"],
+                    },
+                }
+            )
+        index.upsert(vectors=vectors)
+
+    print(f"Indexed {len(chunks)} chunks into Pinecone.")
     return len(chunks)

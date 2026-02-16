@@ -1,7 +1,7 @@
 # tests/test_indexer.py
 import json
-import os
-from src.indexer import load_documents
+from unittest.mock import MagicMock, patch, call
+from src.indexer import load_documents, chunk_documents
 
 
 def test_load_documents_reads_json_files(tmp_path):
@@ -27,15 +27,12 @@ def test_load_documents_skips_non_json(tmp_path):
     assert len(docs) == 0
 
 
-from src.indexer import chunk_documents
-
-
 def test_chunk_documents_splits_long_content():
     docs = [
         {
             "url": "https://www.irs.gov/test",
             "title": "Test",
-            "content": "Word " * 500,  # ~2500 chars
+            "content": "Word " * 500,
             "content_type": "forms",
         }
     ]
@@ -58,3 +55,33 @@ def test_chunk_documents_preserves_metadata():
     assert len(chunks) == 1
     assert chunks[0]["metadata"]["source_url"] == "https://www.irs.gov/form-1040"
     assert chunks[0]["metadata"]["content_type"] == "forms"
+
+
+def test_build_index_upserts_to_pinecone(tmp_path):
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    doc = {
+        "url": "https://www.irs.gov/test",
+        "title": "Test",
+        "content": "Some tax content for testing.",
+        "content_type": "forms",
+    }
+    with open(raw_dir / "doc.json", "w") as f:
+        json.dump(doc, f)
+
+    mock_index = MagicMock()
+    mock_pc = MagicMock()
+    mock_pc.list_indexes.return_value.names.return_value = ["irs-documents"]
+    mock_pc.Index.return_value = mock_index
+
+    mock_voyage = MagicMock()
+    mock_voyage.embed.return_value.embeddings = [[0.1] * 1024]
+
+    with patch("src.indexer.Pinecone", return_value=mock_pc), \
+         patch("src.indexer.voyageai") as mock_voyageai_mod:
+        mock_voyageai_mod.Client.return_value = mock_voyage
+        from src.indexer import build_index
+        count = build_index(raw_dir=str(raw_dir))
+
+    assert count > 0
+    mock_index.upsert.assert_called()
