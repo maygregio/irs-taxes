@@ -4,7 +4,7 @@ import os
 import voyageai
 from pinecone import Pinecone
 
-VOYAGE_MODEL = "voyage-3"
+VOYAGE_MODEL = "voyage-4-lite"
 SCORE_THRESHOLD = 0.3
 TOP_K_FETCH = 10
 

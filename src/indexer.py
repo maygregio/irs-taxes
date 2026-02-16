@@ -1,12 +1,13 @@
 # src/indexer.py
 import json
 import os
+import time
 
 import voyageai
 from pinecone import Pinecone, ServerlessSpec
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-VOYAGE_MODEL = "voyage-3"
+VOYAGE_MODEL = "voyage-4-lite"
 VOYAGE_DIMENSION = 1024
 PINECONE_INDEX_NAME = os.environ.get("PINECONE_INDEX_NAME", "irs-documents")
 PINECONE_CLOUD = "aws"
@@ -93,8 +94,11 @@ def build_index(
 
     index = pc.Index(PINECONE_INDEX_NAME)
 
-    # Clear existing vectors
-    index.delete(delete_all=True)
+    # Clear existing vectors (may fail on a fresh index)
+    try:
+        index.delete(delete_all=True)
+    except Exception:
+        pass
 
     # Embed and upsert in batches
     batch_size = 96  # Voyage AI batch limit
@@ -104,10 +108,22 @@ def build_index(
         batch_end = min(i + batch_size, len(chunks))
         batch_texts = texts[i:batch_end]
 
-        print(f"  Embedding batch {i // batch_size + 1} ({i}–{batch_end})...")
-        result = voyage_client.embed(
-            batch_texts, model=VOYAGE_MODEL, input_type="document"
-        )
+        batch_num = i // batch_size + 1
+        total_batches = (len(chunks) + batch_size - 1) // batch_size
+        print(f"  Embedding batch {batch_num}/{total_batches} ({i}–{batch_end})...")
+
+        for attempt in range(5):
+            try:
+                result = voyage_client.embed(
+                    batch_texts, model=VOYAGE_MODEL, input_type="document"
+                )
+                break
+            except voyageai.error.RateLimitError:
+                wait = 21 * (attempt + 1)
+                print(f"    Rate limited. Waiting {wait}s (attempt {attempt + 1}/5)...")
+                time.sleep(wait)
+        else:
+            raise RuntimeError(f"Failed to embed batch {batch_num} after 5 retries")
         embeddings = result.embeddings
 
         vectors = []
