@@ -3,8 +3,6 @@ import os
 import hmac
 import streamlit as st
 from src.chain import ask
-from src.scraper import scrape_irs
-from src.indexer import build_index
 
 st.set_page_config(page_title="IRS Tax Assistant", page_icon="📋", layout="centered")
 
@@ -16,7 +14,10 @@ def check_password():
 
     password = st.text_input("Password", type="password", placeholder="Enter password to continue")
     if password:
-        correct = os.environ.get("APP_PASSWORD", "")
+        try:
+            correct = st.secrets["APP_PASSWORD"]
+        except (KeyError, FileNotFoundError):
+            correct = os.environ.get("APP_PASSWORD", "")
         if not correct:
             st.error("APP_PASSWORD is not configured.")
             return False
@@ -366,22 +367,10 @@ st.markdown("""
 with st.sidebar:
     st.markdown("### Settings")
 
-    # Show index stats
-    import os
-    raw_count = len([f for f in os.listdir("data/raw") if f.endswith(".json")]) if os.path.exists("data/raw") else 0
-    if raw_count > 0:
-        st.markdown(f'<div class="sidebar-badge">✅ {raw_count:,} documents indexed</div>', unsafe_allow_html=True)
-    else:
-        st.markdown('<div class="sidebar-badge" style="background:#fef2f2;border-color:#fecaca;color:#991b1b;">⚠️ No data indexed yet</div>', unsafe_allow_html=True)
-
-    if st.button("🔄 Re-index IRS Data", use_container_width=True):
-        with st.spinner("Scraping IRS.gov..."):
-            count = scrape_irs()
-            st.success(f"Scraped {count} documents.")
-        with st.spinner("Building index..."):
-            chunks = build_index()
-            st.success(f"Indexed {chunks} chunks.")
-        st.rerun()
+    st.markdown(
+        '<div class="sidebar-badge">IRS Tax Assistant</div>',
+        unsafe_allow_html=True,
+    )
 
     if st.button("🗑️ Clear Chat", use_container_width=True):
         st.session_state.messages = []
@@ -489,4 +478,4 @@ if prompt := st.chat_input("Ask a tax question..."):
                 {"role": "assistant", "content": answer, "sources": sources}
             )
         except Exception as e:
-            st.error(f"Error: {e}. Make sure you've indexed IRS data first (use the sidebar button).")
+            st.error(f"Error: {e}. Make sure the Pinecone index is populated and API keys are configured.")
