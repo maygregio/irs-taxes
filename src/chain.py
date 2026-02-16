@@ -1,7 +1,21 @@
 # src/chain.py
 import json
 import os
+from datetime import date
 from anthropic import Anthropic
+
+
+def get_tax_year_context() -> str:
+    today = date.today()
+    filing_year = today.year
+    tax_year = today.year - 1
+    return (
+        f"Today's date: {today.isoformat()}. "
+        f"The current filing season is {filing_year}, for Tax Year {tax_year} "
+        f"(income earned Jan 1 – Dec 31, {tax_year}). "
+        f"Unless the user specifies otherwise, assume they are filing for Tax Year {tax_year}. "
+        f"Always confirm the tax year with the user if there is any ambiguity."
+    )
 
 CLASSIFIER_PROMPT = """Classify this user question about IRS taxes. Return ONLY a JSON object with these fields:
 - "is_form_question": true if the user is asking about how to fill out, complete, or report something on a specific IRS form or schedule. false otherwise.
@@ -40,6 +54,8 @@ SYSTEM_PROMPT_TEMPLATE = """You are an IRS assistant that answers using only the
 Goal:
 Give the most useful and complete answer possible from the provided IRS materials, while staying accurate and grounded.
 
+{tax_year_context}
+
 Core rules:
 - Use only the provided sources. Do not add outside facts.
 - Be comprehensive: include eligibility rules, thresholds, deadlines, forms, exceptions, and important caveats when relevant.
@@ -70,13 +86,15 @@ FORM_FILLING_PROMPT_TEMPLATE = """You are an IRS form-filling assistant that hel
 Goal:
 Help the user fill out their IRS form correctly by providing {guidance_style}.
 
+{tax_year_context}
+
 Core rules:
 - Use only the provided sources. Do not add outside facts.
 - Never guess at values, thresholds, or line numbers not in the sources.
 - If the question could vary by filing status, tax year, income level, or circumstance, call that out clearly.
 
 Proactive clarification:
-- Before answering, check if the user's situation is ambiguous (e.g., filing status unknown, income type unclear, dependents not mentioned).
+- Before answering, check if the user's situation is ambiguous (e.g., tax year unclear, filing status unknown, income type unclear, dependents not mentioned).
 - If ambiguous, ask 1-2 specific clarifying questions before providing form guidance. For example: "Before I walk you through this, are you filing as single or married filing jointly?" or "Is this income from self-employment or a side job with a W-2?"
 - If the user has already provided enough context (or answered previous clarifying questions in the chat), proceed directly with the guidance.
 
@@ -114,20 +132,24 @@ def build_prompt(
     for i, chunk in enumerate(chunks, 1):
         sources_text += f"### Source {i}: {chunk['title']}\nURL: {chunk['source_url']}\n\n{chunk['text']}\n\n---\n\n"
 
+    tax_year_context = get_tax_year_context()
+
     if query_type == "line_specific":
         system_content = FORM_FILLING_PROMPT_TEMPLATE.format(
             sources=sources_text,
             guidance_style="a line-by-line walkthrough of the specific lines or fields they are asking about",
             response_structure=FORM_LINE_SPECIFIC_STRUCTURE,
+            tax_year_context=tax_year_context,
         )
     elif query_type == "scenario":
         system_content = FORM_FILLING_PROMPT_TEMPLATE.format(
             sources=sources_text,
             guidance_style="scenario-based guidance explaining which parts of the form apply to their situation",
             response_structure=FORM_SCENARIO_STRUCTURE,
+            tax_year_context=tax_year_context,
         )
     else:
-        system_content = SYSTEM_PROMPT_TEMPLATE.format(sources=sources_text)
+        system_content = SYSTEM_PROMPT_TEMPLATE.format(sources=sources_text, tax_year_context=tax_year_context)
 
     messages = [{"role": "system", "content": system_content}]
 
