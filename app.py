@@ -206,12 +206,16 @@ st.markdown("""
     /* ── Streaming message (st.chat_message) ── */
     [data-testid="stChatMessage"] {
         background: #ffffff;
+        color: #212121;
         border: none;
         border-radius: 18px 18px 18px 4px;
         padding: 0.85rem 1.1rem;
         margin-bottom: 0.75rem;
         margin-right: 15%;
         box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    [data-testid="stChatMessage"] * {
+        color: inherit;
     }
     /* Hide default avatar in streaming st.chat_message */
     [data-testid="stChatMessage"] [data-testid="stChatMessageAvatarCustom"],
@@ -226,12 +230,17 @@ st.markdown("""
         overflow: hidden;
     }
     [data-testid="stChatInput"] textarea {
+        background: #ffffff;
+        color: #212121;
         font-family: 'Inter', sans-serif;
         font-size: 0.95rem;
         border: 2px solid #e0e0e0;
         border-radius: 12px;
         padding: 0.75rem 1rem;
         transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    [data-testid="stChatInput"] textarea::placeholder {
+        color: #757575;
     }
     [data-testid="stChatInput"] textarea:focus {
         border-color: #1976d2;
@@ -327,6 +336,8 @@ st.markdown("""
 
     /* ── Password input ── */
     [data-testid="stTextInput"] input {
+        background: #ffffff;
+        color: #212121;
         font-family: 'Inter', sans-serif;
         border: 2px solid #e0e0e0;
         border-radius: 8px;

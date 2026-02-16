@@ -105,10 +105,11 @@ def discover_pagination(html: str, base_url: str) -> list[str]:
 
 SCRAPE_TARGETS = [
     {"url": "https://www.irs.gov/forms-instructions", "content_type": "forms"},
-    {"url": "https://www.irs.gov/forms-instructions-and-publications", "content_type": "forms"},
-    {"url": "https://www.irs.gov/publications", "content_type": "publications"},
+    #{"url": "https://www.irs.gov/forms-instructions-and-publications", "content_type": "forms"},
+    #{"url": "https://www.irs.gov/publications", "content_type": "publications"},
     {"url": "https://www.irs.gov/taxtopics", "content_type": "taxtopics"},
     {"url": "https://www.irs.gov/faqs", "content_type": "faqs"},
+    {"url": "https://www.irs.gov/newsroom/one-big-beautiful-bill-provisions", "content_type": "news"},
 ]
 
 HEADERS = {
@@ -165,10 +166,15 @@ def save_document(doc: dict, output_dir: str) -> None:
         json.dump(doc, f, indent=2)
 
 
-def scrape_irs(output_dir: str = "data/raw", max_pages_per_target: int = 200) -> int:
+def scrape_irs(
+    output_dir: str = "data/raw",
+    max_pages_per_target: int = 200,
+    return_urls: bool = False,
+) -> int | tuple[int, list[str]]:
     """
     Scrape IRS.gov target pages and save content as JSON files.
     Returns the number of documents saved.
+    If return_urls=True, returns (doc_count, scraped_urls).
     """
     os.makedirs(output_dir, exist_ok=True)
     pdf_dir = os.path.join(output_dir, "pdfs")
@@ -176,6 +182,7 @@ def scrape_irs(output_dir: str = "data/raw", max_pages_per_target: int = 200) ->
 
     visited = set()
     doc_count = 0
+    scraped_urls = []
 
     for target in SCRAPE_TARGETS:
         print(f"\nScraping {target['content_type']}: {target['url']}")
@@ -230,6 +237,7 @@ def scrape_irs(output_dir: str = "data/raw", max_pages_per_target: int = 200) ->
                         }
                         save_document(doc, output_dir)
                         doc_count += 1
+                        scraped_urls.append(link)
                         print(f"  [{doc_count}] PDF: {link}")
             else:
                 page_html = fetch_page(link)
@@ -238,9 +246,12 @@ def scrape_irs(output_dir: str = "data/raw", max_pages_per_target: int = 200) ->
                     doc["content_type"] = target["content_type"]
                     save_document(doc, output_dir)
                     doc_count += 1
+                    scraped_urls.append(link)
                     print(f"  [{doc_count}] Page: {link}")
 
             time.sleep(1.5)
 
     print(f"\nDone. Scraped {doc_count} documents.")
+    if return_urls:
+        return doc_count, scraped_urls
     return doc_count
