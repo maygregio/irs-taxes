@@ -53,7 +53,7 @@ def _deduplicate(chunks: list[dict]) -> list[dict]:
     return selected
 
 
-def retrieve_relevant_chunks(query: str, top_k: int = 5) -> list[dict]:
+def retrieve_relevant_chunks(query: str, top_k: int = 10) -> list[dict]:
     """
     Retrieve relevant chunks using Pinecone vector search.
     Embeds the query via Voyage AI, queries Pinecone, filters by score,

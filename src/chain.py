@@ -179,7 +179,7 @@ def ask(question: str, chat_history: list[dict]) -> tuple[list[dict], callable]:
         chunks = retrieve_relevant_chunks(augmented_query, top_k=10)
         query_type = classification["query_type"]
     else:
-        chunks = retrieve_relevant_chunks(question, top_k=5)
+        chunks = retrieve_relevant_chunks(question, top_k=10)
         query_type = None
 
     messages = build_prompt(question, chunks, chat_history, query_type=query_type)
