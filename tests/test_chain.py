@@ -123,7 +123,7 @@ def test_ask_uses_default_flow_for_non_form_questions():
     # Verify retrieval was called with original query and default top_k
     call_args = mock_retrieve.call_args
     assert call_args[0][0] == "When is the deadline?"
-    assert call_args[1]["top_k"] == 5
+    assert call_args[1]["top_k"] == 10
 
 
 def test_build_prompt_uses_form_template_for_line_specific():
