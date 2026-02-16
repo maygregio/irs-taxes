@@ -4,28 +4,41 @@ from src.retriever import (
     retrieve_relevant_chunks,
     _deduplicate,
     _text_overlap_ratio,
-    _reciprocal_rank_fusion,
 )
 
 
 def test_retrieve_relevant_chunks_returns_formatted_results():
-    mock_results = {
-        "documents": [["Tax filing deadline is April 15.", "Standard deduction is $14,600."]],
-        "metadatas": [
-            [
-                {"source_url": "https://www.irs.gov/page1", "title": "Filing Deadlines"},
-                {"source_url": "https://www.irs.gov/page2", "title": "Deductions"},
-            ]
-        ],
-        "distances": [[0.2, 0.4]],
+    mock_query_result = {
+        "matches": [
+            {
+                "id": "chunk_0",
+                "score": 0.85,
+                "metadata": {
+                    "text": "Tax filing deadline is April 15.",
+                    "source_url": "https://www.irs.gov/page1",
+                    "title": "Filing Deadlines",
+                },
+            },
+            {
+                "id": "chunk_1",
+                "score": 0.75,
+                "metadata": {
+                    "text": "Standard deduction is $14,600.",
+                    "source_url": "https://www.irs.gov/page2",
+                    "title": "Deductions",
+                },
+            },
+        ]
     }
 
-    with patch("src.retriever._get_collection") as mock_col, \
-         patch("src.retriever._get_embedding_model") as mock_model, \
-         patch("src.retriever._bm25_search", side_effect=FileNotFoundError):
-        mock_col.return_value.query.return_value = mock_results
-        mock_model.return_value.encode.return_value = [[0.1] * 384]
+    mock_index = MagicMock()
+    mock_index.query.return_value = mock_query_result
 
+    mock_voyage = MagicMock()
+    mock_voyage.embed.return_value.embeddings = [[0.1] * 1024]
+
+    with patch("src.retriever._get_pinecone_index", return_value=mock_index), \
+         patch("src.retriever._get_voyage_client", return_value=mock_voyage):
         results = retrieve_relevant_chunks("When is the tax deadline?")
 
     assert len(results) == 2
@@ -34,24 +47,38 @@ def test_retrieve_relevant_chunks_returns_formatted_results():
     assert results[1]["text"] == "Standard deduction is $14,600."
 
 
-def test_distance_threshold_filters_irrelevant():
-    mock_results = {
-        "documents": [["Relevant chunk.", "Irrelevant chunk."]],
-        "metadatas": [
-            [
-                {"source_url": "https://irs.gov/1", "title": "A"},
-                {"source_url": "https://irs.gov/2", "title": "B"},
-            ]
-        ],
-        "distances": [[0.3, 0.9]],  # second is above 0.8 threshold
+def test_score_threshold_filters_irrelevant():
+    mock_query_result = {
+        "matches": [
+            {
+                "id": "chunk_0",
+                "score": 0.85,
+                "metadata": {
+                    "text": "Relevant chunk.",
+                    "source_url": "https://irs.gov/1",
+                    "title": "A",
+                },
+            },
+            {
+                "id": "chunk_1",
+                "score": 0.15,
+                "metadata": {
+                    "text": "Irrelevant chunk.",
+                    "source_url": "https://irs.gov/2",
+                    "title": "B",
+                },
+            },
+        ]
     }
 
-    with patch("src.retriever._get_collection") as mock_col, \
-         patch("src.retriever._get_embedding_model") as mock_model, \
-         patch("src.retriever._bm25_search", side_effect=FileNotFoundError):
-        mock_col.return_value.query.return_value = mock_results
-        mock_model.return_value.encode.return_value = [[0.1] * 384]
+    mock_index = MagicMock()
+    mock_index.query.return_value = mock_query_result
 
+    mock_voyage = MagicMock()
+    mock_voyage.embed.return_value.embeddings = [[0.1] * 1024]
+
+    with patch("src.retriever._get_pinecone_index", return_value=mock_index), \
+         patch("src.retriever._get_voyage_client", return_value=mock_voyage):
         results = retrieve_relevant_chunks("test query")
 
     assert len(results) == 1
@@ -74,18 +101,3 @@ def test_deduplicate_removes_overlapping():
     assert len(result) == 2
     assert result[0]["text"] == chunks[0]["text"]
     assert result[1]["text"] == chunks[2]["text"]
-
-
-def test_reciprocal_rank_fusion_merges():
-    list_a = [
-        {"text": "chunk A", "source_url": "a", "title": "A"},
-        {"text": "chunk B", "source_url": "b", "title": "B"},
-    ]
-    list_b = [
-        {"text": "chunk B", "source_url": "b", "title": "B"},
-        {"text": "chunk C", "source_url": "c", "title": "C"},
-    ]
-    merged = _reciprocal_rank_fusion([list_a, list_b])
-    # chunk B appears in both lists, so it should rank highest
-    assert merged[0]["text"] == "chunk B"
-    assert len(merged) == 3
